@@ -76,7 +76,7 @@ export default function CozinhaPage() {
               </div>
 
               <div className="flex-1">
-                <ul className="space-y-3 mb-6">
+                <ul className="space-y-3 mb-4">
                   {order.order_items.map((oi: any, index: number) => (
                     <li key={index} className="flex items-start text-lg">
                       <span className="bg-slate-100 text-slate-700 font-black px-2.5 py-0.5 rounded-md mr-3 border border-slate-200">
@@ -86,6 +86,13 @@ export default function CozinhaPage() {
                     </li>
                   ))}
                 </ul>
+
+                {order.notes && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-6">
+                    <p className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-1">📝 Observação</p>
+                    <p className="text-amber-900 font-semibold text-sm">{order.notes}</p>
+                  </div>
+                )}
               </div>
 
               <button

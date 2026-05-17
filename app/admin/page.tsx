@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
-import { Plus, Trash2, Download, Package, DollarSign, Receipt, LayoutDashboard } from "lucide-react";
+import { Plus, Trash2, Download, Package, DollarSign, Receipt, LayoutDashboard, XCircle, CalendarDays } from "lucide-react";
 
 export default function AdminPage() {
   const [items, setItems] = useState<any[]>([]);
@@ -11,29 +11,72 @@ export default function AdminPage() {
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("");
   const [totalArrecadado, setTotalArrecadado] = useState(0);
+  const [filtro, setFiltro] = useState("hoje");
+  const [dataInicio, setDataInicio] = useState("");
+  const [dataFim, setDataFim] = useState("");
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       if (!data.session) window.location.href = "/login";
     });
     fetchItems();
-    fetchOrders();
   }, []);
+
+  useEffect(() => {
+    fetchOrders();
+  }, [filtro, dataInicio, dataFim]);
 
   async function fetchItems() {
     const { data } = await supabase.from("items").select("*").order("name");
     if (data) setItems(data);
   }
 
-  async function fetchOrders() {
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
+  function getDateRange(): { from: string | null; to: string | null } {
+    const now = new Date();
 
-    const { data } = await supabase
+    if (filtro === "personalizado") {
+      return {
+        from: dataInicio ? new Date(dataInicio + "T00:00:00").toISOString() : null,
+        to: dataFim ? new Date(dataFim + "T23:59:59").toISOString() : null,
+      };
+    }
+
+    const inicio = new Date(now);
+    inicio.setHours(0, 0, 0, 0);
+
+    switch (filtro) {
+      case "hoje":
+        break;
+      case "ontem":
+        inicio.setDate(inicio.getDate() - 1);
+        const fimOntem = new Date(inicio);
+        fimOntem.setHours(23, 59, 59, 999);
+        return { from: inicio.toISOString(), to: fimOntem.toISOString() };
+      case "7dias":
+        inicio.setDate(inicio.getDate() - 7);
+        break;
+      case "30dias":
+        inicio.setDate(inicio.getDate() - 30);
+        break;
+      case "todas":
+        return { from: null, to: null };
+    }
+
+    return { from: inicio.toISOString(), to: null };
+  }
+
+  async function fetchOrders() {
+    const { from, to } = getDateRange();
+
+    let query = supabase
       .from("orders")
       .select(`*, order_items ( quantity, items ( name ) )`)
-      .gte("created_at", hoje.toISOString())
       .order("created_at", { ascending: false });
+
+    if (from) query = query.gte("created_at", from);
+    if (to) query = query.lte("created_at", to);
+
+    const { data } = await query;
 
     if (data) {
       setOrders(data);
@@ -70,28 +113,63 @@ export default function AdminPage() {
     }
   }
 
-  // NOVA LÓGICA DE EXCLUSÃO DE LOG DE VENDA
-  async function handleDeleteOrder(id: string) {
-    if (confirm("🚨 ATENÇÃO: Tem certeza que deseja cancelar e apagar esta venda? O registro será deletado permanentemente.")) {
-      // 1. Primeiro apagamos as referências na tabela de ligação (order_items)
-      await supabase.from("order_items").delete().eq("order_id", id);
-      
-      // 2. Depois apagamos a venda principal
-      const { error } = await supabase.from("orders").delete().eq("id", id);
+  // CANCELAR PEDIDO: Devolve ao estoque e apaga a venda
+  async function handleCancelOrder(orderId: string) {
+    if (!confirm("🚨 CANCELAR PEDIDO?\n\nOs itens serão devolvidos ao estoque e a venda será removida do sistema.\n\nDeseja continuar?")) return;
 
-      if (error) {
-        alert("Erro ao excluir a venda: " + error.message);
-      } else {
-        alert("Venda apagada com sucesso!");
-        fetchOrders(); // Recarrega a tabela e recalcula o total
+    try {
+      // 1. Buscar os itens do pedido para saber o que devolver ao estoque
+      const { data: orderItems, error: fetchError } = await supabase
+        .from("order_items")
+        .select("item_id, quantity")
+        .eq("order_id", orderId);
+
+      if (fetchError) throw new Error("Erro ao buscar itens do pedido: " + fetchError.message);
+
+      // 2. Devolver cada item ao estoque
+      if (orderItems && orderItems.length > 0) {
+        for (const oi of orderItems) {
+          // Buscar estoque atual
+          const { data: currentItem, error: itemError } = await supabase
+            .from("items")
+            .select("stock_quantity")
+            .eq("id", oi.item_id)
+            .single();
+
+          if (itemError) {
+            console.error(`Erro ao buscar item ${oi.item_id}:`, itemError);
+            continue;
+          }
+
+          // Atualizar estoque somando a quantidade de volta
+          const newStock = (currentItem?.stock_quantity || 0) + oi.quantity;
+          await supabase
+            .from("items")
+            .update({ stock_quantity: newStock })
+            .eq("id", oi.item_id);
+        }
       }
+
+      // 3. Apagar os order_items
+      await supabase.from("order_items").delete().eq("order_id", orderId);
+
+      // 4. Apagar a order
+      const { error: deleteError } = await supabase.from("orders").delete().eq("id", orderId);
+
+      if (deleteError) throw new Error("Erro ao excluir o pedido: " + deleteError.message);
+
+      alert("✅ Pedido cancelado com sucesso!\nOs itens foram devolvidos ao estoque.");
+      fetchOrders();
+      fetchItems(); // Atualiza a lista de estoque também
+    } catch (err: any) {
+      alert("❌ " + err.message);
     }
   }
 
   function exportToCSV() {
     if (orders.length === 0) return alert("Não há vendas para exportar.");
     
-    const headers = ["Ticket", "Cliente", "Data", "Hora", "Pagamento", "Total (R$)", "Itens"];
+    const headers = ["Ticket", "Cliente", "Data", "Hora", "Pagamento", "Total (R$)", "Itens", "Observação"];
     const rows = orders.map(order => {
       const data = new Date(order.created_at);
       const itensFormatados = order.order_items.map((oi: any) => `${oi.quantity}x ${oi.items?.name}`).join(" | ");
@@ -102,7 +180,8 @@ export default function AdminPage() {
         data.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         order.payment_method.toUpperCase(),
         Number(order.total_amount).toFixed(2).replace(".", ","),
-        `"${itensFormatados}"`
+        `"${itensFormatados}"`,
+        `"${order.notes || ''}"`
       ];
     });
 
@@ -224,14 +303,66 @@ export default function AdminPage() {
         <div className="lg:col-span-2">
           <div className="bg-white p-6 lg:p-8 rounded-3xl border border-slate-200 shadow-sm h-full">
             
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-              <h2 className="text-xl font-bold text-slate-800">Log de Vendas (Hoje)</h2>
-              <button 
-                onClick={exportToCSV}
-                className="bg-emerald-50 text-emerald-700 px-5 py-2.5 rounded-full font-bold text-sm hover:bg-emerald-100 transition-colors flex items-center justify-center gap-2 border border-emerald-200"
-              >
-                <Download size={18} /> Exportar Excel
-              </button>
+            <div className="flex flex-col gap-4 mb-8">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                  <CalendarDays size={20} className="text-blue-500" /> Log de Vendas
+                </h2>
+                <button 
+                  onClick={exportToCSV}
+                  className="bg-emerald-50 text-emerald-700 px-5 py-2.5 rounded-full font-bold text-sm hover:bg-emerald-100 transition-colors flex items-center justify-center gap-2 border border-emerald-200"
+                >
+                  <Download size={18} /> Exportar Excel
+                </button>
+              </div>
+
+              {/* Filtros de Data */}
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  { key: "hoje", label: "Hoje" },
+                  { key: "ontem", label: "Ontem" },
+                  { key: "7dias", label: "7 dias" },
+                  { key: "30dias", label: "30 dias" },
+                  { key: "todas", label: "Todas" },
+                  { key: "personalizado", label: "Personalizado" },
+                ].map((f) => (
+                  <button
+                    key={f.key}
+                    onClick={() => setFiltro(f.key)}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+                      filtro === f.key
+                        ? "bg-slate-800 text-white border-slate-800 shadow-sm"
+                        : "bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Campos de data personalizada */}
+              {filtro === "personalizado" && (
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs font-bold text-slate-500">De:</label>
+                    <input
+                      type="date"
+                      value={dataInicio}
+                      onChange={(e) => setDataInicio(e.target.value)}
+                      className="border-2 border-slate-200 rounded-xl px-3 py-2 text-sm font-medium text-slate-800 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs font-bold text-slate-500">Até:</label>
+                    <input
+                      type="date"
+                      value={dataFim}
+                      onChange={(e) => setDataFim(e.target.value)}
+                      className="border-2 border-slate-200 rounded-xl px-3 py-2 text-sm font-medium text-slate-800 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {orders.length === 0 ? (
@@ -258,7 +389,10 @@ export default function AdminPage() {
                         <td className="py-4 px-4 font-black text-slate-900">#{order.order_number}</td>
                         <td className="py-4 px-4 font-medium">{order.customer_name || "-"}</td>
                         <td className="py-4 px-4 text-sm">
-                          {order.order_items.map((oi: any) => `${oi.quantity}x ${oi.items?.name}`).join(", ")}
+                          <div>{order.order_items.map((oi: any) => `${oi.quantity}x ${oi.items?.name}`).join(", ")}</div>
+                          {order.notes && (
+                            <p className="text-xs text-amber-600 font-semibold mt-1 italic">📝 {order.notes}</p>
+                          )}
                         </td>
                         <td className="py-4 px-4">
                           <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2.5 py-1 rounded-md uppercase">
@@ -270,11 +404,12 @@ export default function AdminPage() {
                         </td>
                         <td className="py-4 px-4 text-center">
                           <button 
-                            onClick={() => handleDeleteOrder(order.id)}
-                            className="text-slate-400 hover:text-rose-500 transition-colors p-2 bg-white rounded-full shadow-sm border border-slate-100 mx-auto block"
-                            title="Apagar Log de Venda"
+                            onClick={() => handleCancelOrder(order.id)}
+                            className="inline-flex items-center gap-1.5 text-rose-500 hover:bg-rose-50 border border-rose-200 hover:border-rose-300 transition-all px-3 py-1.5 rounded-xl font-bold text-xs"
+                            title="Cancelar pedido e devolver ao estoque"
                           >
-                            <Trash2 size={18} />
+                            <XCircle size={16} />
+                            Cancelar
                           </button>
                         </td>
                       </tr>

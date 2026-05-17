@@ -2,13 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
-import { ShoppingBag, Check, Trash2, User, CreditCard, Plus } from "lucide-react";
+import { ShoppingBag, Check, Trash2, User, CreditCard, Plus, MessageSquare } from "lucide-react";
 
 export default function CaixaPage() {
   const [items, setItems] = useState<any[]>([]);
   const [cart, setCart] = useState<any[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("dinheiro");
+  const [notes, setNotes] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -57,8 +58,12 @@ export default function CaixaPage() {
     if (error) {
       alert("Erro: " + error.message);
     } else {
+      // Salvar observação separadamente (a function não aceita esse campo)
+      if (notes.trim()) {
+        await supabase.from("orders").update({ notes: notes.trim() }).eq("id", data.order_id);
+      }
       alert(`✅ Sucesso! Ticket: #${data.order_number}`);
-      setCart([]); setCustomerName(""); fetchItems();
+      setCart([]); setCustomerName(""); setNotes(""); fetchItems();
     }
   }
 
@@ -185,6 +190,17 @@ export default function CaixaPage() {
                 <option value="pix">PIX</option>
                 <option value="cartao">Cartão Débito/Crédito</option>
               </select>
+            </div>
+
+            <div className="relative group">
+              <MessageSquare className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={18} />
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Observações (ex: sem cebola, bem passado...)"
+                rows={2}
+                className="w-full bg-white border-2 border-slate-200 pl-11 pr-4 py-3 rounded-2xl focus:border-blue-500 focus:ring-0 outline-none transition-all text-slate-900 placeholder:text-slate-400 font-medium resize-none text-sm"
+              />
             </div>
           </div>
 
