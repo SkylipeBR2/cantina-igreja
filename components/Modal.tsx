@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import React, { useEffect } from "react";
 
 export type ModalType = "success" | "error" | "warning" | "info" | "confirm";
 
@@ -18,7 +18,7 @@ export interface ModalOptions {
   onCancel?: () => void;
 }
 
-const ICONS: Record<ModalType, JSX.Element> = {
+const ICONS: Record<ModalType, React.ReactNode> = {
   success: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="w-8 h-8">
       <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
