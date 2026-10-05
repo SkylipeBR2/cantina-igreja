@@ -69,16 +69,30 @@ export default function CozinhaPage() {
   const [deliveryTrackingAvailable, setDeliveryTrackingAvailable] = useState(true);
 
   const fetchKitchenOrders = async () => {
-    const response = await fetch("/api/cozinha/pedidos", { cache: "no-store" });
-    const data = await response.json().catch(() => []);
-    if (!response.ok || !Array.isArray(data)) {
-      setError("Não foi possível carregar os pedidos da cozinha.");
-      return;
-    }
+    try {
+      const response = await fetch("/api/cozinha/pedidos", { cache: "no-store" });
+      const data: unknown = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data)) {
+        const failure = data && typeof data === "object" && !Array.isArray(data)
+          ? data as { codigo?: string }
+          : null;
+        const message = response.status === 401 || response.redirected
+          ? "Sua sessão expirou. Entre novamente para ver os pedidos."
+          : response.status === 403
+            ? "Esta conta não tem permissão para acessar a cozinha."
+            : response.status === 429
+              ? "Muitas atualizações. Aguarde um momento e tente novamente."
+              : `Não foi possível carregar os pedidos da cozinha${failure?.codigo ? ` (código ${failure.codigo})` : ` (HTTP ${response.status})`}.`;
+        setError(message);
+        return;
+      }
 
-    setDeliveryTrackingAvailable(data.every((order) => "status_entrega" in order));
-    setOrders(data as KitchenOrder[]);
-    setError(null);
+      setDeliveryTrackingAvailable(data.every((order) => order && typeof order === "object" && "status_entrega" in order));
+      setOrders(data as KitchenOrder[]);
+      setError(null);
+    } catch {
+      setError("Não foi possível conectar à cozinha. Verifique a conexão e tente novamente.");
+    }
   };
 
   useEffect(() => {

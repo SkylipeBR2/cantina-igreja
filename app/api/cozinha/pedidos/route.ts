@@ -7,8 +7,11 @@ export async function GET(request: NextRequest) {
   const rateLimitError = rejectRateLimitedRequest(request, "kitchen-queue", 120, 60_000);
   if (rateLimitError) return rateLimitError;
   const staff = await requireStaff(request);
-  if (!staff || !["admin", "manager", "kitchen"].includes(staff.role)) {
+  if (!staff) {
     return NextResponse.json({ erro: "Acesso não autorizado" }, { status: 401 });
+  }
+  if (!["admin", "manager", "kitchen"].includes(staff.role)) {
+    return NextResponse.json({ erro: "Conta sem permissão para a cozinha" }, { status: 403 });
   }
 
   const baseFields = "id, order_number, customer_name, created_at, notes, payment_status, status, order_items(id, quantity, items(name))";
@@ -23,6 +26,9 @@ export async function GET(request: NextRequest) {
   if (error?.code === "42703" && error.message.includes("status_entrega")) {
     ({ data, error } = await loadOrders(baseFields));
   }
-  if (error) return NextResponse.json({ erro: "Não foi possível carregar os pedidos" }, { status: 500 });
+  if (error) {
+    console.error("Falha ao consultar pedidos da cozinha", { code: error.code, message: error.message });
+    return NextResponse.json({ erro: "Não foi possível carregar os pedidos", codigo: error.code }, { status: 500 });
+  }
   return NextResponse.json(data ?? [], { headers: { "Cache-Control": "no-store" } });
 }
