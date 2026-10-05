@@ -1,29 +1,48 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { supabase } from "../../lib/supabase";
-import { ShoppingBag, Check, Trash2, User, CreditCard, Plus } from "lucide-react";
+import { ShoppingBag, Check, Trash2, User, CreditCard, Plus, MessageSquare } from "lucide-react";
+import Modal from "../../components/Modal";
+import { useModal } from "../../hooks/useModal";
+import { motion, useReducedMotion } from "motion/react";
+
+type MenuItem = {
+  id: string;
+  name: string;
+  price: number;
+  stock_quantity: number;
+};
+
+type CartItem = Pick<MenuItem, "id" | "name" | "price"> & {
+  quantity: number;
+};
 
 export default function CaixaPage() {
-  const [items, setItems] = useState<any[]>([]);
-  const [cart, setCart] = useState<any[]>([]);
+  const [items, setItems] = useState<MenuItem[]>([]);
+  const [cart, setCart] = useState<CartItem[]>([]);
   const [customerName, setCustomerName] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("dinheiro");
+  const [notes, setNotes] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const { options, close, showModal } = useModal();
+  const shouldReduceMotion = useReducedMotion();
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) window.location.href = "/login";
-    });
     fetchItems();
   }, []);
 
   async function fetchItems() {
-    const { data } = await supabase.from("items").select("*").order("name");
-    if (data) setItems(data);
+    const response = await fetch("/api/caixa/itens");
+    const data = await response.json().catch(() => []);
+    if (response.ok && Array.isArray(data)) setItems(data as MenuItem[]);
   }
 
-  function addToCart(item: any) {
+  function addToCart(item: MenuItem) {
+    const quantityInCart = cart.find((cartItem) => cartItem.id === item.id)?.quantity ?? 0;
+    if (quantityInCart >= item.stock_quantity) {
+      showModal("warning", "Estoque insuficiente", `Só há ${item.stock_quantity} unidade(s) disponíveis de “${item.name}”.`);
+      return;
+    }
     setCart((prev) => {
       const existing = prev.find((i) => i.id === item.id);
       if (existing) {
@@ -40,30 +59,32 @@ export default function CaixaPage() {
   const total = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
 
   async function handleCheckout() {
-    if (cart.length === 0) return alert("Carrinho vazio!");
+    if (cart.length === 0) return showModal("warning", "Carrinho vazio", "Adicione pelo menos um item antes de finalizar.");
+    if (!customerName.trim()) return showModal("warning", "Nome obrigatório", "Informe o nome do cliente para finalizar o pedido.");
     setIsLoading(true);
 
-    const cartItemsDb = cart.map((item) => ({ item_id: item.id, quantity: item.quantity, price: item.price }));
-
-    const { data, error } = await supabase.rpc("process_order", {
-      p_items: cartItemsDb, 
-      p_customer_name: customerName || "Anônimo", 
-      p_payment_method: paymentMethod, 
-      p_total_amount: total,
-    });
-
-    setIsLoading(false);
-
-    if (error) {
-      alert("Erro: " + error.message);
-    } else {
-      alert(`✅ Sucesso! Ticket: #${data.order_number}`);
-      setCart([]); setCustomerName(""); fetchItems();
+    try {
+      const response = await fetch("/api/caixa/pedidos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: cart.map((item) => ({ id: item.id, quantity: item.quantity })), customerName: customerName.trim(), paymentMethod, notes: notes.trim() || undefined }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.erro ?? "Não foi possível finalizar");
+      showModal("success", "Pedido finalizado!", `Ticket #${data.order_number} registrado com sucesso.`, "Novo pedido", () => {
+        setCart([]); setCustomerName(""); setNotes(""); fetchItems();
+      });
+    } catch (error) {
+      showModal("error", "Não foi possível finalizar", error instanceof Error ? error.message : "Tente novamente.");
+    } finally {
+      setIsLoading(false);
     }
   }
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-[calc(100vh-64px)] bg-[#F8FAFC]">
+    <>
+      <Modal options={options} onClose={close} />
+      <motion.div initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: "easeOut" }} className="flex min-h-[calc(100vh-64px)] flex-col bg-white lg:flex-row">
       
       {/* Lado Esquerdo: Cardápio */}
       <div className="flex-1 p-4 lg:p-8">
@@ -79,7 +100,7 @@ export default function CaixaPage() {
               className={`group relative flex flex-col items-start p-5 rounded-3xl border-2 transition-all duration-200 ${
                 item.stock_quantity > 0
                   ? "bg-white border-transparent shadow-sm hover:border-blue-200 hover:shadow-xl hover:shadow-blue-50"
-                  : "bg-slate-100 border-transparent opacity-70"
+                  : "border-slate-200 bg-white opacity-70"
               }`}
             >
               <span className="text-lg font-bold text-slate-800 leading-tight mb-2">
@@ -99,7 +120,7 @@ export default function CaixaPage() {
               <button
                 onClick={() => addToCart(item)}
                 disabled={item.stock_quantity <= 0}
-                className="mt-auto w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold transition-all disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white"
+                className="mt-auto w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary/10 text-primary font-bold transition-all hover:bg-primary hover:text-primary-foreground disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
               >
                 {item.stock_quantity > 0 ? (
                   <>
@@ -124,7 +145,7 @@ export default function CaixaPage() {
             </div>
             <h2 className="text-xl font-bold text-slate-800">Pedido Atual</h2>
           </div>
-          <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1.5 rounded-full">
+          <span className="bg-blue-50 text-blue-700 text-xs font-bold px-3 py-1.5 rounded-full">
             {cart.reduce((a, b) => a + b.quantity, 0)} itens
           </span>
         </div>
@@ -132,14 +153,14 @@ export default function CaixaPage() {
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {cart.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-4 py-12">
-              <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center">
+              <div className="w-20 h-20 rounded-full border border-slate-100 bg-white flex items-center justify-center">
                 <ShoppingBag size={32} className="opacity-20" />
               </div>
               <p className="font-medium text-sm">O carrinho está vazio</p>
             </div>
           ) : (
             cart.map((item) => (
-              <div key={item.id} className="flex justify-between items-center p-4 rounded-2xl bg-slate-50 border border-slate-100 group">
+              <div key={item.id} className="flex justify-between items-center p-4 rounded-2xl bg-white border border-slate-200 group">
                 <div className="flex items-center gap-4">
                   <span className="flex items-center justify-center w-8 h-8 bg-white text-blue-600 font-bold rounded-xl shadow-sm border border-slate-200 text-sm">
                     {item.quantity}
@@ -161,18 +182,22 @@ export default function CaixaPage() {
         </div>
 
         {/* Finalização */}
-        <div className="p-6 bg-slate-50/80 border-t border-slate-200 space-y-6">
+        <div className="p-6 bg-white border-t border-slate-200 space-y-6">
           <div className="space-y-4">
             <div className="relative group">
               <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={18} />
               <input
+                id="customer-name"
                 type="text"
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
                 placeholder="Nome do cliente"
-                className="w-full bg-white border-2 border-slate-200 pl-11 pr-4 py-3.5 rounded-2xl focus:border-blue-500 focus:ring-0 outline-none transition-all text-slate-900 placeholder:text-slate-400 font-medium"
+                aria-describedby="customer-name-help"
+                className={`w-full bg-white border-2 pl-11 pr-10 py-3.5 rounded-2xl focus:ring-0 outline-none transition-all text-slate-900 placeholder:text-slate-400 font-medium ${customerName.trim() ? "border-slate-200 focus:border-blue-500" : "border-rose-300 focus:border-rose-500"}`}
               />
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-lg font-black text-rose-500" aria-hidden="true">*</span>
             </div>
+            <p id="customer-name-help" className="sr-only">Nome obrigatório para finalizar o pedido.</p>
 
             <div className="relative group">
               <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={18} />
@@ -185,6 +210,12 @@ export default function CaixaPage() {
                 <option value="pix">PIX</option>
                 <option value="cartao">Cartão Débito/Crédito</option>
               </select>
+            </div>
+
+            <div className="relative group">
+              <MessageSquare className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={18} />
+              <label htmlFor="order-notes" className="sr-only">Observações do pedido</label>
+              <textarea id="order-notes" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Observações (ex.: sem cebola)" rows={2} className="w-full resize-none rounded-2xl border-2 border-slate-200 bg-white py-3 pr-4 pl-11 text-sm font-medium text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-blue-500" />
             </div>
           </div>
 
@@ -202,6 +233,7 @@ export default function CaixaPage() {
           </button>
         </div>
       </aside>
-    </div>
+      </motion.div>
+    </>
   );
 }

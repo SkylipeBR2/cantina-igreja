@@ -1,43 +1,63 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { supabase } from "../../lib/supabase";
-import { Plus, Trash2, Download, Package, DollarSign, Receipt, LayoutDashboard } from "lucide-react";
+import { Plus, Trash2, Download, Package, Receipt, LayoutDashboard, Search, XCircle } from "lucide-react";
+import { CommerceDashboard } from "@/components/ui/commerce-dashboard";
+import { motion, useReducedMotion } from "motion/react";
 
 export default function AdminPage() {
+  const shouldReduceMotion = useReducedMotion();
   const [items, setItems] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("");
   const [totalArrecadado, setTotalArrecadado] = useState(0);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState("todos");
+  const [statusFilter, setStatusFilter] = useState("todos");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [period, setPeriod] = useState("hoje");
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) window.location.href = "/login";
-    });
     fetchItems();
     fetchOrders();
   }, []);
 
+  useEffect(() => { fetchOrders(); }, [dateFrom, dateTo, paymentFilter]);
+
+  function choosePeriod(nextPeriod: string) {
+    setPeriod(nextPeriod);
+    const now = new Date();
+    const format = (date: Date) => date.toISOString().slice(0, 10);
+    if (nextPeriod === "todas") { setDateFrom(""); setDateTo(""); return; }
+    const start = new Date(now);
+    if (nextPeriod === "ontem") { start.setDate(now.getDate() - 1); setDateFrom(format(start)); setDateTo(format(start)); return; }
+    if (nextPeriod === "7dias") start.setDate(now.getDate() - 6);
+    if (nextPeriod === "30dias") start.setDate(now.getDate() - 29);
+    setDateFrom(format(start)); setDateTo(format(now));
+  }
+
   async function fetchItems() {
-    const { data } = await supabase.from("items").select("*").order("name");
-    if (data) setItems(data);
+    const response = await fetch("/api/admin/itens");
+    const data = await response.json().catch(() => []);
+    if (response.ok && Array.isArray(data)) setItems(data);
   }
 
   async function fetchOrders() {
-    const hoje = new Date();
-    hoje.setHours(0, 0, 0, 0);
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("from", dateFrom);
+    if (dateTo) params.set("to", dateTo);
+    if (paymentFilter !== "todos") params.set("paymentMethod", paymentFilter);
+    const response = await fetch(`/api/admin/pedidos?${params.toString()}`);
+    const data = await response.json().catch(() => []);
 
-    const { data } = await supabase
-      .from("orders")
-      .select(`*, order_items ( quantity, items ( name ) )`)
-      .gte("created_at", hoje.toISOString())
-      .order("created_at", { ascending: false });
-
-    if (data) {
+    if (response.ok && Array.isArray(data)) {
       setOrders(data);
-      const total = data.reduce((acc, order) => acc + Number(order.total_amount), 0);
+      const total = data
+        .filter((o: any) => o.status !== 'cancelado')
+        .reduce((acc: number, order: any) => acc + Number(order.total_amount), 0);
       setTotalArrecadado(total);
     }
   }
@@ -46,12 +66,14 @@ export default function AdminPage() {
     e.preventDefault();
     if (!name || !price || !stock) return alert("Preencha todos os campos");
 
-    const { error } = await supabase.from("items").insert([
-      { name, price: parseFloat(price), stock_quantity: parseInt(stock) },
-    ]);
-
-    if (error) {
-      alert("Erro ao adicionar: " + error.message);
+    const response = await fetch("/api/admin/itens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, price: parseFloat(price), stockQuantity: parseInt(stock) }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      alert("Erro ao adicionar: " + (data.erro ?? "Tente novamente"));
     } else {
       setName(""); setPrice(""); setStock(""); fetchItems();
     }
@@ -60,9 +82,8 @@ export default function AdminPage() {
   // NOVA LÓGICA DE EXCLUSÃO DE ITEM
   async function handleDeleteItem(id: string) {
     if (confirm("Tem certeza que deseja excluir este item?")) {
-      const { error } = await supabase.from("items").delete().eq("id", id);
-      
-      if (error) {
+      const response = await fetch(`/api/admin/itens?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!response.ok) {
         alert("⚠️ Bloqueio de Segurança: Este item não pode ser excluído porque já existe uma venda registrada com ele. Para removê-lo da tela do Caixa, apenas atualize o Estoque dele para 0 (zero).");
       } else {
         fetchItems();
@@ -70,21 +91,24 @@ export default function AdminPage() {
     }
   }
 
-  // NOVA LÓGICA DE EXCLUSÃO DE LOG DE VENDA
-  async function handleDeleteOrder(id: string) {
-    if (confirm("🚨 ATENÇÃO: Tem certeza que deseja cancelar e apagar esta venda? O registro será deletado permanentemente.")) {
-      // 1. Primeiro apagamos as referências na tabela de ligação (order_items)
-      await supabase.from("order_items").delete().eq("order_id", id);
-      
-      // 2. Depois apagamos a venda principal
-      const { error } = await supabase.from("orders").delete().eq("id", id);
+  // CANCELAR PEDIDO — devolve estoque via API
+  async function handleCancelOrder(id: string) {
+    if (!confirm("🚨 Tem certeza que deseja CANCELAR este pedido? O estoque será devolvido.")) return;
+    
+    try {
+      const res = await fetch('/api/cancelar-pedido', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: id }),
+      }).then(r => r.json());
 
-      if (error) {
-        alert("Erro ao excluir a venda: " + error.message);
-      } else {
-        alert("Venda apagada com sucesso!");
-        fetchOrders(); // Recarrega a tabela e recalcula o total
-      }
+      if (res.erro) throw new Error(res.erro);
+
+      alert('✅ Pedido cancelado e estoque devolvido!');
+      fetchOrders();
+      fetchItems();
+    } catch (e: any) {
+      alert('Erro: ' + (e.message || 'Falha ao cancelar'));
     }
   }
 
@@ -92,7 +116,7 @@ export default function AdminPage() {
     if (orders.length === 0) return alert("Não há vendas para exportar.");
     
     const headers = ["Ticket", "Cliente", "Data", "Hora", "Pagamento", "Total (R$)", "Itens"];
-    const rows = orders.map(order => {
+    const rows = filteredOrders.map(order => {
       const data = new Date(order.created_at);
       const itensFormatados = order.order_items.map((oi: any) => `${oi.quantity}x ${oi.items?.name}`).join(" | ");
       return [
@@ -117,8 +141,16 @@ export default function AdminPage() {
     document.body.removeChild(link);
   }
 
+  const filteredOrders = orders.filter((order) => {
+    const searchable = `${order.order_number} ${order.customer_name || ""} ${order.order_items?.map((item: any) => item.items?.name || "").join(" ")}`.toLowerCase();
+    const normalizedStatus = order.status === "cancelado" ? "cancelado" : order.status_pagamento === "pago" ? "pago" : "aguardando";
+    return searchable.includes(searchTerm.trim().toLowerCase()) && (statusFilter === "todos" || normalizedStatus === statusFilter);
+  });
+  const paidCount = orders.filter((order) => order.status !== "cancelado" && order.status_pagamento === "pago").length;
+  const lowStockCount = items.filter((item) => item.stock_quantity > 0 && item.stock_quantity <= 5).length;
+
   return (
-    <div className="p-4 lg:p-8 min-h-[calc(100vh-64px)] bg-[#F8FAFC]">
+    <motion.div initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: "easeOut" }} className="min-h-[calc(100vh-64px)] bg-white p-4 lg:p-8">
       
       {/* Cabeçalho e Estatísticas */}
       <div className="mb-8">
@@ -132,27 +164,7 @@ export default function AdminPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <DollarSign size={28} />
-            </div>
-            <div>
-              <p className="text-slate-500 text-sm font-bold uppercase tracking-wider">Arrecadado Hoje</p>
-              <p className="text-3xl font-black text-slate-900">R$ {totalArrecadado.toFixed(2)}</p>
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
-              <Receipt size={28} />
-            </div>
-            <div>
-              <p className="text-slate-500 text-sm font-bold uppercase tracking-wider">Vendas Hoje</p>
-              <p className="text-3xl font-black text-slate-900">{orders.length} pedidos</p>
-            </div>
-          </div>
-        </div>
+        <CommerceDashboard revenue={totalArrecadado} orderCount={orders.length} paidCount={paidCount} lowStockCount={lowStockCount} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -222,10 +234,10 @@ export default function AdminPage() {
 
         {/* Coluna Direita: Log de Vendas */}
         <div className="lg:col-span-2">
-          <div className="bg-white p-6 lg:p-8 rounded-3xl border border-slate-200 shadow-sm h-full">
+          <div className="h-full rounded-3xl border border-slate-200 bg-white p-6 shadow-sm lg:p-8">
             
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-              <h2 className="text-xl font-bold text-slate-800">Log de Vendas (Hoje)</h2>
+              <h2 className="text-xl font-bold text-slate-800">Log de Vendas {dateFrom || dateTo ? "do período" : "(Hoje)"}</h2>
               <button 
                 onClick={exportToCSV}
                 className="bg-emerald-50 text-emerald-700 px-5 py-2.5 rounded-full font-bold text-sm hover:bg-emerald-100 transition-colors flex items-center justify-center gap-2 border border-emerald-200"
@@ -234,7 +246,32 @@ export default function AdminPage() {
               </button>
             </div>
 
-            {orders.length === 0 ? (
+            <section aria-label="Filtros de vendas" className="mb-7 border-y border-slate-100 py-5">
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap gap-1" role="group" aria-label="Período rápido">
+                    {[['hoje','Hoje'],['ontem','Ontem'],['7dias','7 dias'],['30dias','30 dias'],['todas','Todas']].map(([value,label]) => (
+                      <button key={value} type="button" onClick={() => choosePeriod(value)} className={`rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors ${period === value ? "border-blue-600 text-blue-700" : "border-transparent text-slate-500 hover:border-slate-200 hover:text-slate-800"}`}>{label}</button>
+                    ))}
+                  </div>
+                  {(dateFrom || dateTo || paymentFilter !== "todos" || statusFilter !== "todos" || searchTerm) && (
+                    <button type="button" onClick={() => { setDateFrom(""); setDateTo(""); setPaymentFilter("todos"); setStatusFilter("todos"); setSearchTerm(""); setPeriod("hoje"); }} className="text-sm font-bold text-blue-700 underline-offset-4 hover:underline">Limpar filtros</button>
+                  )}
+                </div>
+                <div className="relative max-w-md">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+                  <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Buscar ticket, cliente ou item" aria-label="Buscar vendas" className="h-10 w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm font-medium text-slate-800 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100" />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <label className="text-sm font-semibold text-slate-700">De<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} className="mt-1.5 block h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
+                  <label className="text-sm font-semibold text-slate-700">Até<input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} className="mt-1.5 block h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100" /></label>
+                  <label className="text-sm font-semibold text-slate-700">Pagamento<select value={paymentFilter} onChange={(event) => setPaymentFilter(event.target.value)} className="mt-1.5 block h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"><option value="todos">Todos</option><option value="dinheiro">Dinheiro</option><option value="pix">Pix</option><option value="cartao">Cartão</option></select></label>
+                  <label className="text-sm font-semibold text-slate-700">Status<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="mt-1.5 block h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"><option value="todos">Todos</option><option value="pago">Pago</option><option value="aguardando">Aguardando</option><option value="cancelado">Cancelado</option></select></label>
+                </div>
+              </div>
+            </section>
+
+            {filteredOrders.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-slate-400">
                 <Receipt size={48} className="opacity-20 mb-4" />
                 <p className="font-medium">Nenhuma venda registrada hoje.</p>
@@ -248,13 +285,14 @@ export default function AdminPage() {
                       <th className="pb-4 font-bold px-4">Cliente</th>
                       <th className="pb-4 font-bold px-4">Itens</th>
                       <th className="pb-4 font-bold px-4">Pagamento</th>
+                      <th className="pb-4 font-bold px-4">Status</th>
                       <th className="pb-4 font-bold text-right px-4">Total</th>
                       <th className="pb-4 font-bold text-center px-4">Ação</th>
                     </tr>
                   </thead>
                   <tbody className="text-slate-700">
-                    {orders.map((order) => (
-                      <tr key={order.id} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                    {filteredOrders.map((order) => (
+                      <tr key={order.id} className={`border-b border-slate-100 hover:bg-slate-50 transition-colors ${order.status === 'cancelado' ? 'opacity-50' : ''}`}>
                         <td className="py-4 px-4 font-black text-slate-900">#{order.order_number}</td>
                         <td className="py-4 px-4 font-medium">{order.customer_name || "-"}</td>
                         <td className="py-4 px-4 text-sm">
@@ -265,17 +303,30 @@ export default function AdminPage() {
                             {order.payment_method}
                           </span>
                         </td>
+                        <td className="py-4 px-4">
+                          {order.status === 'cancelado' ? (
+                            <span className="bg-rose-50 text-rose-600 text-xs font-bold px-2.5 py-1 rounded-md">CANCELADO</span>
+                          ) : (
+                            <span className={`text-xs font-bold px-2.5 py-1 rounded-md ${order.status_pagamento === 'pago' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                              {order.status_pagamento === 'pago' ? 'PAGO' : 'AGUARDANDO'}
+                            </span>
+                          )}
+                        </td>
                         <td className="py-4 px-4 font-bold text-right text-slate-900">
                           R$ {Number(order.total_amount).toFixed(2)}
                         </td>
                         <td className="py-4 px-4 text-center">
-                          <button 
-                            onClick={() => handleDeleteOrder(order.id)}
-                            className="text-slate-400 hover:text-rose-500 transition-colors p-2 bg-white rounded-full shadow-sm border border-slate-100 mx-auto block"
-                            title="Apagar Log de Venda"
-                          >
-                            <Trash2 size={18} />
-                          </button>
+                          <div className="flex items-center justify-center gap-1">
+                            {order.status !== 'cancelado' && (
+                              <button 
+                                onClick={() => handleCancelOrder(order.id)}
+                                className="text-slate-400 hover:text-amber-500 transition-colors p-2 bg-white rounded-full shadow-sm border border-slate-100"
+                                title="Cancelar pedido e devolver estoque"
+                              >
+                                <XCircle size={18} />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -287,6 +338,6 @@ export default function AdminPage() {
         </div>
 
       </div>
-    </div>
+    </motion.div>
   );
 }

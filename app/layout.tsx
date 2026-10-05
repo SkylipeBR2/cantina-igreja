@@ -1,9 +1,15 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import Navbar from "../components/Navbar";
+import { DM_Sans, Fraunces } from "next/font/google";
+import { cn } from "@/lib/utils";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/sonner";
+import { ThemeProvider } from "@/components/theme-provider";
 
-const inter = Inter({ subsets: ["latin"] });
+const dmSans = DM_Sans({ subsets: ["latin"], variable: "--font-sans" });
+const fraunces = Fraunces({ subsets: ["latin"], variable: "--font-display" });
+
 
 // Defina a URL base para facilitar a manutenção
 const siteUrl = "https://cantina-igreja.vercel.app";
@@ -44,10 +50,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR">
-      <body className={inter.className}>
-        <Navbar />
-        <main>{children}</main>
+    <html lang="pt-BR" suppressHydrationWarning className={cn("font-sans", dmSans.variable, fraunces.variable)}>
+      <body suppressHydrationWarning>
+        <ThemeProvider attribute="class" forcedTheme="light" enableSystem={false} disableTransitionOnChange>
+          <TooltipProvider>
+            <Navbar />
+            <main>{children}</main>
+            <Toaster position="top-right" richColors />
+          </TooltipProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
