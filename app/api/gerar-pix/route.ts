@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { mercadoPagoPayments } from "@/lib/server/mercado-pago";
 import { supabaseAdmin } from "@/lib/server/supabase-admin";
+import { requireTotem } from "@/lib/server/request-auth";
 import { isUuid, readJsonBody, rejectCrossSiteRequest, rejectRateLimitedRequest } from "@/lib/server/request-security";
 
 export async function POST(req: NextRequest) {
@@ -8,6 +9,7 @@ export async function POST(req: NextRequest) {
   if (originError) return originError;
   const rateLimitError = rejectRateLimitedRequest(req, "generate-pix", 6, 60_000);
   if (rateLimitError) return rateLimitError;
+  if (!await requireTotem(req)) return NextResponse.json({ erro: "Acesso não autorizado" }, { status: 401 });
   if (!process.env.MERCADOPAGO_ACCESS_TOKEN?.trim()) {
     console.error("MERCADOPAGO_ACCESS_TOKEN ausente no servidor");
     return NextResponse.json({ erro: "Pagamento indisponível no momento. Avise a equipe." }, { status: 503 });

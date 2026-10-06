@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { reconcileMercadoPagoPayment } from "@/lib/server/payment-sync";
 import { supabaseAdmin } from "@/lib/server/supabase-admin";
+import { requireTotem } from "@/lib/server/request-auth";
 import { rejectRateLimitedRequest } from "@/lib/server/request-security";
 
 const reconciliationCooldowns = new Map<string, number>();
@@ -17,6 +18,7 @@ function mayReconcile(providerPaymentId: string) {
 export async function GET(request: NextRequest) {
   const rateLimitError = rejectRateLimitedRequest(request, "order-status-public", 45, 60_000);
   if (rateLimitError) return rateLimitError;
+  if (!await requireTotem(request)) return NextResponse.json({ erro: "Acesso não autorizado" }, { status: 401 });
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   const token = searchParams.get("token");

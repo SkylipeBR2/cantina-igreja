@@ -6,11 +6,13 @@ const HOME_BY_ROLE: Record<string, string> = {
   manager: "/admin",
   cashier: "/caixa",
   kitchen: "/cozinha",
+  totem: "/totem",
 };
 const ROUTE_ROLES: Array<{ path: string; roles: string[] }> = [
   { path: "/admin", roles: ["admin", "manager"] },
   { path: "/caixa", roles: ["admin", "manager", "cashier"] },
   { path: "/cozinha", roles: ["admin", "manager", "kitchen"] },
+  { path: "/totem", roles: ["totem"] },
 ];
 
 export async function proxy(request: NextRequest) {

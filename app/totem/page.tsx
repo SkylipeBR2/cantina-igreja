@@ -19,6 +19,15 @@ function avatarColor(name: string) {
 }
 function fmt(n: number) { return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }); }
 
+async function fetchTotem(input: RequestInfo | URL, init?: RequestInit) {
+  const response = await fetch(input, init);
+  if (response.status === 401) {
+    window.location.replace("/login");
+    throw new Error("A sessão do totem terminou. Entre novamente para continuar.");
+  }
+  return response;
+}
+
 export default function TotemPage() {
   const shouldReduceMotion = useReducedMotion();
   const [step, setStep] = useState<Step>("cardapio");
@@ -45,7 +54,7 @@ export default function TotemPage() {
   const checkoutInFlight = useRef(false);
 
   useEffect(() => {
-    fetch("/api/catalogo")
+    fetchTotem("/api/catalogo")
       .then((response) => response.ok ? response.json() : [])
       .then((data) => setItems(Array.isArray(data) ? data : []))
       .catch(() => setItems([]));
@@ -62,7 +71,7 @@ export default function TotemPage() {
   useEffect(() => {
     if (step !== "pagamento" || !orderId || !trackingToken) return;
     const t = setInterval(async () => {
-      const res = await fetch(`/api/status-pedido?id=${orderId}&token=${trackingToken}`).then(r => r.json()).catch(() => ({}));
+      const res = await fetchTotem(`/api/status-pedido?id=${orderId}&token=${trackingToken}`).then(r => r.json()).catch(() => ({}));
       if (res.status_pagamento === "pago") { clearInterval(t); setCountdown(60); setStep("confirmacao"); }
       if (res.status_pagamento === "recusado") {
         clearInterval(t);
@@ -159,7 +168,7 @@ export default function TotemPage() {
       let currentTrackingToken = trackingToken;
       const detailsKey = checkoutDetailsKey();
       if (!canReuseOrder()) {
-        const orderResponse = await fetch("/api/criar-pedido", {
+        const orderResponse = await fetchTotem("/api/criar-pedido", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ itens: cart.map((item) => ({ id: item.id, quantity: item.quantity })), nomeCliente: nome.trim(), paymentMethod: "pix", observacao: observacao.trim() }),
         });
@@ -178,7 +187,7 @@ export default function TotemPage() {
         setOrderDetailsKey(detailsKey);
       }
 
-      const pixResponse = await fetch("/api/gerar-pix", {
+      const pixResponse = await fetchTotem("/api/gerar-pix", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id_pedido: currentOrderId, trackingToken: currentTrackingToken, emailCliente: "cliente@cantina.com" }),
       });
@@ -213,7 +222,7 @@ export default function TotemPage() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
-      const response = await fetch("/api/avaliar-totem", {
+      const response = await fetchTotem("/api/avaliar-totem", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id_pedido: orderId, trackingToken, nota }),

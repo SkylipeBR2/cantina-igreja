@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
 export default function HomePage() {
-  // A entrada pública do sistema é o autoatendimento da cantina.
+  // O proxy solicita a sessão do totem antes de abrir o autoatendimento.
   redirect("/totem");
 }

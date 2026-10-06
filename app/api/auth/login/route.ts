@@ -8,6 +8,7 @@ const HOME_BY_ROLE: Record<string, string> = {
   manager: "/admin",
   cashier: "/caixa",
   kitchen: "/cozinha",
+  totem: "/totem",
 };
 
 export async function POST(request: NextRequest) {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/server/supabase-admin";
+import { requireTotem } from "@/lib/server/request-auth";
 import { isUuid, readJsonBody, rejectCrossSiteRequest, rejectRateLimitedRequest } from "@/lib/server/request-security";
 
 export async function POST(request: NextRequest) {
@@ -7,6 +8,7 @@ export async function POST(request: NextRequest) {
   if (originError) return originError;
   const rateLimitError = rejectRateLimitedRequest(request, "rate-totem", 60, 60_000);
   if (rateLimitError) return rateLimitError;
+  if (!await requireTotem(request)) return NextResponse.json({ erro: "Acesso não autorizado" }, { status: 401 });
 
   let body: { id_pedido?: unknown; trackingToken?: unknown; nota?: unknown };
   try {

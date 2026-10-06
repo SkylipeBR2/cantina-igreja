@@ -45,7 +45,7 @@ export default function LoginPage() {
 
       const result = await response.json() as { destino?: string };
       const destination = result.destino;
-      if (!destination || !["/admin", "/caixa", "/cozinha"].includes(destination)) {
+      if (!destination || !["/admin", "/caixa", "/cozinha", "/totem"].includes(destination)) {
         throw new Error("Destino de login inválido");
       }
       navigating = true;
