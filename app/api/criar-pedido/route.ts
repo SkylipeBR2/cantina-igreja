@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
       !Array.isArray(itens)
       || itens.length === 0
       || itens.length > 25
-      || !["pix", "cartao"].includes(String(paymentMethod))
+      || paymentMethod !== "pix"
       || itens.some((item) => !isUuid(item.id) || !Number.isInteger(item.quantity) || Number(item.quantity) < 1 || Number(item.quantity) > 50)
       || (nomeCliente != null && (typeof nomeCliente !== "string" || nomeCliente.length > 120))
       || (observacao != null && (typeof observacao !== "string" || observacao.length > 500))

@@ -1,30 +1,15 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Plus, Minus, ChevronRight, CheckCircle2, QrCode, Copy, Check, ShoppingCart, ArrowLeft, CreditCard } from "lucide-react";
+import Image from "next/image";
+import { Plus, Minus, ChevronRight, CheckCircle2, QrCode, Copy, Check, ShoppingCart, ArrowLeft, Star } from "lucide-react";
 import { ShimmerText } from "@/components/ui/shimmer-text";
 import { ShineBorder } from "@/components/ui/shine-border";
 import { motion, useReducedMotion } from "motion/react";
 
 type Item = { id: string; name: string; price: number; stock_quantity: number };
 type CartItem = Item & { quantity: number };
-type Step = "cardapio" | "revisao" | "cartao" | "pagamento" | "confirmacao";
-type MetodoPagamento = "pix" | "cartao";
-type CardBrick = { unmount?: () => void };
-type CardBrickSettings = {
-  initialization: { amount: number };
-  callbacks: {
-    onReady: () => void;
-    onError: (error: unknown) => void;
-    onSubmit: (cardData: Record<string, unknown>) => Promise<void>;
-  };
-  customization: { visual: { style: { theme: "default" } } };
-};
-type MercadoPagoConstructor = new (key: string, options: { locale: string }) => {
-  bricks: () => {
-    create: (type: "cardPayment", target: string, settings: CardBrickSettings) => Promise<CardBrick>;
-  };
-};
+type Step = "cardapio" | "revisao" | "pagamento" | "confirmacao";
 
 const AVATAR_COLORS = ["#3b82f6","#8b5cf6","#f59e0b","#ef4444","#10b981","#06b6d4","#f97316","#6366f1"];
 function avatarColor(name: string) {
@@ -49,12 +34,14 @@ export default function TotemPage() {
   const [pix, setPix] = useState<{ copiaECola: string; qrCode: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [countdown, setCountdown] = useState(15);
-  const [metodoPagamento, setMetodoPagamento] = useState<MetodoPagamento>("pix");
-  const [cardError, setCardError] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState(60);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [observacao, setObservacao] = useState("");
-  const cardBrickContainer = useRef<HTMLDivElement>(null);
+  const [rating, setRating] = useState<number | null>(null);
+  const [ratingSubmitting, setRatingSubmitting] = useState(false);
+  const [ratingSubmitted, setRatingSubmitted] = useState(false);
+  const [ratingError, setRatingError] = useState<string | null>(null);
+  const ratingInFlight = useRef(false);
   const checkoutInFlight = useRef(false);
 
   useEffect(() => {
@@ -65,18 +52,18 @@ export default function TotemPage() {
   }, []);
 
   useEffect(() => {
-    if (step !== "confirmacao") return;
+    if (step !== "confirmacao" || ratingSubmitting) return;
     const t = setInterval(() => {
       setCountdown(p => { if (p <= 1) { clearInterval(t); reset(); return 0; } return p - 1; });
     }, 1000);
     return () => clearInterval(t);
-  }, [step]);
+  }, [step, ratingSubmitting]);
 
   useEffect(() => {
     if (step !== "pagamento" || !orderId || !trackingToken) return;
     const t = setInterval(async () => {
       const res = await fetch(`/api/status-pedido?id=${orderId}&token=${trackingToken}`).then(r => r.json()).catch(() => ({}));
-      if (res.status_pagamento === "pago") { clearInterval(t); setCountdown(15); setStep("confirmacao"); }
+      if (res.status_pagamento === "pago") { clearInterval(t); setCountdown(60); setStep("confirmacao"); }
       if (res.status_pagamento === "recusado") {
         clearInterval(t);
         setPaymentError("O pagamento foi recusado. Revise o pedido para tentar novamente.");
@@ -116,8 +103,9 @@ export default function TotemPage() {
   function reset() {
     setStep("cardapio"); setCart([]); setNome(""); setOrderId(null); setTrackingToken(null); setOrderDetailsKey(null);
     setOrderNum(null); setPaymentExpiresAt(null); setPaymentSecondsLeft(0); setPix(null); setLoading(false); setCopied(false);
-    setMetodoPagamento("pix"); setCardError(null);
     setObservacao(""); setPaymentError(null);
+    setRating(null); setRatingSubmitting(false); setRatingSubmitted(false); setRatingError(null);
+    ratingInFlight.current = false;
   }
 
   function addItem(item: Item) {
@@ -144,99 +132,22 @@ export default function TotemPage() {
   const total = cart.reduce((s, i) => s + i.price * i.quantity, 0);
   const totalItems = cart.reduce((s, i) => s + i.quantity, 0);
 
-  function checkoutDetailsKey(method: MetodoPagamento) {
+  function checkoutDetailsKey() {
     return JSON.stringify({
       items: cart.map((item) => ({ id: item.id, quantity: item.quantity })),
       customerName: nome.trim(),
       notes: observacao.trim(),
-      method,
+      method: "pix",
     });
   }
 
-  function canReuseOrder(method: MetodoPagamento) {
+  function canReuseOrder() {
     return Boolean(
       orderId && trackingToken && paymentExpiresAt
-      && orderDetailsKey === checkoutDetailsKey(method)
+      && orderDetailsKey === checkoutDetailsKey()
       && new Date(paymentExpiresAt).getTime() > Date.now()
     );
   }
-
-  useEffect(() => {
-    if (step !== "cartao") return;
-    let cancelled = false;
-    let brick: CardBrick | undefined;
-
-    async function mountCardBrick() {
-      try {
-        const existingScript = document.querySelector<HTMLScriptElement>('script[src="https://sdk.mercadopago.com/js/v2"]');
-        const sdkWindow = window as Window & { MercadoPago?: MercadoPagoConstructor };
-        if (!sdkWindow.MercadoPago) {
-          await new Promise<void>((resolve, reject) => {
-            const script = existingScript ?? document.createElement("script");
-            script.addEventListener("load", () => resolve(), { once: true });
-            script.addEventListener("error", () => reject(new Error("Não foi possível carregar o formulário de pagamento.")), { once: true });
-            if (!existingScript) {
-              script.src = "https://sdk.mercadopago.com/js/v2";
-              script.async = true;
-              document.body.appendChild(script);
-            }
-          });
-        }
-        if (cancelled || !cardBrickContainer.current) return;
-        const publicKey = process.env.NEXT_PUBLIC_MERCADOPAGO_TOKEN;
-        if (!publicKey) throw new Error("Pagamento com cartão indisponível no momento.");
-        const MercadoPago = sdkWindow.MercadoPago;
-        if (!MercadoPago) throw new Error("Não foi possível carregar o formulário de pagamento.");
-        const mp = new MercadoPago(publicKey, { locale: "pt-BR" });
-        brick = await mp.bricks().create("cardPayment", "cardPaymentBrick_container", {
-          initialization: { amount: Number(total.toFixed(2)) },
-          callbacks: {
-            onReady: () => undefined,
-            onError: () => { if (!cancelled) setCardError("Não foi possível carregar o formulário seguro. Tente novamente."); },
-            onSubmit: async (cardData: Record<string, unknown>) => {
-              setLoading(true);
-              setCardError(null);
-              try {
-                if (!orderId || !trackingToken) throw new Error("Pedido indisponível. Volte e tente novamente.");
-
-                const paymentResponse = await fetch("/api/pagar-cartao", {
-                  method: "POST", headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ ...cardData, id_pedido: orderId, trackingToken }),
-                });
-                const payment = await paymentResponse.json();
-                if (paymentResponse.status === 422) {
-                  setPaymentError(payment.erro || "Pagamento recusado. Revise o pedido para tentar novamente.");
-                  setOrderId(null);
-                  setTrackingToken(null);
-                  setOrderDetailsKey(null);
-                  setStep("pagamento");
-                  return;
-                }
-                if (!paymentResponse.ok || payment.erro) throw new Error(payment.erro || "Não foi possível processar o pagamento.");
-                if (payment.status === "approved") { setCountdown(15); setStep("confirmacao"); }
-                else setStep("pagamento");
-              } catch (error) {
-                const message = error instanceof Error ? error.message : "Erro ao processar o cartão.";
-                setCardError(message);
-                throw error;
-              } finally {
-                setLoading(false);
-              }
-            },
-          },
-          customization: { visual: { style: { theme: "default" } } },
-        });
-      } catch (error) {
-        if (!cancelled) setCardError(error instanceof Error ? error.message : "Não foi possível carregar o formulário seguro.");
-      }
-    }
-
-    void mountCardBrick();
-    return () => {
-      cancelled = true;
-      brick?.unmount?.();
-    };
-  }, [step, total, cart, nome, observacao, orderId, trackingToken]);
 
   async function confirmarPedido() {
     if (checkoutInFlight.current) return;
@@ -246,8 +157,8 @@ export default function TotemPage() {
     try {
       let currentOrderId = orderId;
       let currentTrackingToken = trackingToken;
-      const detailsKey = checkoutDetailsKey("pix");
-      if (!canReuseOrder("pix")) {
+      const detailsKey = checkoutDetailsKey();
+      if (!canReuseOrder()) {
         const orderResponse = await fetch("/api/criar-pedido", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ itens: cart.map((item) => ({ id: item.id, quantity: item.quantity })), nomeCliente: nome.trim(), paymentMethod: "pix", observacao: observacao.trim() }),
@@ -288,38 +199,35 @@ export default function TotemPage() {
     }
   }
 
-  async function continuarParaCartao() {
-    if (checkoutInFlight.current) return;
-    setCardError(null);
-    const detailsKey = checkoutDetailsKey("cartao");
-    if (canReuseOrder("cartao")) {
-      setStep("cartao");
+  async function avaliarTotem(nota: number) {
+    if (ratingInFlight.current || ratingSubmitted) return;
+    if (!orderId || !trackingToken) {
+      setRatingError("Não foi possível identificar este pedido.");
       return;
     }
-    checkoutInFlight.current = true;
-    setLoading(true);
+
+    ratingInFlight.current = true;
+    setRating(nota);
+    setRatingSubmitting(true);
+    setRatingError(null);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
-      const response = await fetch("/api/criar-pedido", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ itens: cart.map((item) => ({ id: item.id, quantity: item.quantity })), nomeCliente: nome.trim(), paymentMethod: "cartao", observacao: observacao.trim() }),
+      const response = await fetch("/api/avaliar-totem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id_pedido: orderId, trackingToken, nota }),
+        signal: controller.signal,
       });
-      const order = await response.json().catch(() => null) as {
-        id?: string; trackingToken?: string; order_number?: number; paymentExpiresAt?: string; erro?: string;
-      } | null;
-      if (!response.ok || !order?.id || !order.trackingToken) {
-        throw new Error(order?.erro || "Não foi possível criar o pedido.");
-      }
-      setOrderId(order.id);
-      setTrackingToken(order.trackingToken);
-      setOrderNum(order.order_number ?? null);
-      setPaymentExpiresAt(order.paymentExpiresAt ?? null);
-      setOrderDetailsKey(detailsKey);
-      setStep("cartao");
+      const result = await response.json().catch(() => null) as { erro?: string } | null;
+      if (!response.ok) throw new Error(result?.erro || "Não foi possível salvar sua avaliação. Tente novamente.");
+      setRatingSubmitted(true);
     } catch (error) {
-      setCardError(error instanceof Error ? error.message : "Não foi possível iniciar o pagamento.");
+      setRatingError(error instanceof Error ? error.message : "Não foi possível salvar sua avaliação. Tente novamente.");
     } finally {
-      checkoutInFlight.current = false;
-      setLoading(false);
+      clearTimeout(timeout);
+      ratingInFlight.current = false;
+      setRatingSubmitting(false);
     }
   }
 
@@ -335,7 +243,7 @@ export default function TotemPage() {
       {/* Header */}
       <header className="totem-header" style={{ padding: "18px 32px", borderBottom: "1px solid rgba(255,255,255,0.09)", display: "flex", alignItems: "center", justifyContent: "space-between", backdropFilter: "blur(12px)", background: "rgba(7,17,31,0.72)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 12, background: "linear-gradient(135deg,#3b82f6,#6366f1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🍽️</div>
+          <Image src="/Logotipo_blue.png" alt="Logo Cantina PIB" width={44} height={44} style={{ width: 44, height: 44, objectFit: "contain", background: "#fff", borderRadius: 12, padding: 4 }} priority />
           <div>
             <div style={{ fontWeight: 800, fontSize: 20, letterSpacing: "-0.5px" }}>Cantina PIB</div>
             <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Autoatendimento</div>
@@ -463,7 +371,8 @@ export default function TotemPage() {
 
           <div style={{ marginBottom: 20 }}>
             <label htmlFor="nome-cliente" style={{ display: "block", fontWeight: 600, marginBottom: 8, fontSize: 15 }}>Seu nome <span style={{ color: "rgba(255,255,255,0.3)", fontWeight: 400 }}>(opcional)</span></label>
-            <input id="nome-cliente" maxLength={120} value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Maria" style={{ width: "100%", padding: "14px 16px", borderRadius: 12, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box" }} />
+            <input id="nome-cliente" aria-describedby="nome-cliente-ajuda" maxLength={120} value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Maria" style={{ width: "100%", padding: "14px 16px", borderRadius: 12, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box" }} />
+            <p id="nome-cliente-ajuda" style={{ marginTop: 7, color: "rgba(255,255,255,0.55)", fontSize: 13 }}>Vamos chamar pelo nome; sem nome, pela senha do pedido.</p>
           </div>
 
           <div style={{ marginBottom: 20 }}>
@@ -471,41 +380,16 @@ export default function TotemPage() {
             <textarea id="observacao-pedido" maxLength={500} value={observacao} onChange={e => setObservacao(e.target.value)} placeholder="Ex: Sem cebola, sem maionese..." rows={2} style={{ width: "100%", padding: "14px 16px", borderRadius: 12, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 16, outline: "none", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }} />
           </div>
 
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: "block", fontWeight: 600, marginBottom: 12, fontSize: 15 }}>Forma de pagamento</label>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
-              {(["pix", "cartao"] as MetodoPagamento[]).map(m => (
-                <button key={m} onClick={() => setMetodoPagamento(m)} style={{ padding: "18px 12px", borderRadius: 14, border: `2px solid ${metodoPagamento === m ? "#3b82f6" : "rgba(255,255,255,0.1)"}`, background: metodoPagamento === m ? "rgba(59,130,246,0.12)" : "rgba(255,255,255,0.04)", color: "#fff", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, transition: "all 0.2s" }}>
-                  <span style={{ fontSize: 28 }}>{m === "pix" ? "💠" : "💳"}</span>
-                  <span style={{ fontWeight: 700, fontSize: 15 }}>{m === "pix" ? "Pix" : "Cartão"}</span>
-                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>{m === "pix" ? "Instantâneo" : "Crédito"}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+          <p style={{ marginBottom: 20, color: "rgba(255,255,255,0.6)", fontSize: 15 }}>Pagamento por Pix</p>
 
-          {(metodoPagamento === "pix" ? paymentError : cardError) && (
+          {paymentError && (
             <div role="alert" style={{ marginBottom: 20, padding: "12px 16px", borderRadius: 12, background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.4)", color: "#fca5a5", fontSize: 14 }}>
-              {metodoPagamento === "pix" ? paymentError : cardError}
+              {paymentError}
             </div>
           )}
-          <button onClick={metodoPagamento === "pix" ? confirmarPedido : continuarParaCartao} disabled={loading} style={{ width: "100%", padding: "18px", borderRadius: 16, background: loading ? "rgba(255,255,255,0.1)" : "linear-gradient(135deg,#3b82f6,#6366f1)", border: "none", color: "#fff", fontWeight: 800, fontSize: 18, cursor: loading ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, transition: "all 0.2s" }}>
-            {loading ? "Aguarde..." : metodoPagamento === "pix" ? <><QrCode size={22} /> Gerar QR Code Pix</> : <><CreditCard size={22} /> Continuar para Cartão</>}
+          <button onClick={confirmarPedido} disabled={loading} style={{ width: "100%", padding: "18px", borderRadius: 16, background: loading ? "rgba(255,255,255,0.1)" : "linear-gradient(135deg,#3b82f6,#6366f1)", border: "none", color: "#fff", fontWeight: 800, fontSize: 18, cursor: loading ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, transition: "all 0.2s" }}>
+            {loading ? "Aguarde..." : <><QrCode size={22} /> Gerar QR Code Pix</>}
           </button>
-        </div>
-      )}
-
-      {/* STEP 2b — CARTÃO */}
-      {step === "cartao" && (
-        <div style={{ maxWidth: 520, margin: "0 auto", padding: "40px 24px" }}>
-          <button onClick={() => setStep("revisao")} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, marginBottom: 28, fontSize: 14 }}>
-            <ArrowLeft size={16} /> Voltar
-          </button>
-          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 4 }}>Pagamento com Cartão</h1>
-          <p style={{ color: "rgba(255,255,255,0.4)", marginBottom: 28, fontSize: 15 }}>Total: <strong style={{ color: "#60a5fa" }}>{fmt(total)}</strong></p>
-
-          {cardError && <div style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.4)", borderRadius: 12, padding: "12px 16px", marginBottom: 20, color: "#fca5a5", fontSize: 14 }}>{cardError}</div>}
-          <div id="cardPaymentBrick_container" ref={cardBrickContainer} aria-label="Formulário seguro de pagamento com cartão" />
         </div>
       )}
 
@@ -513,21 +397,15 @@ export default function TotemPage() {
       {step === "pagamento" && (
         <div style={{ maxWidth: 520, margin: "0 auto", padding: "40px 24px", textAlign: "center" }}>
           <div style={{ width: 64, height: 64, borderRadius: 20, background: "rgba(59,130,246,0.15)", border: "2px solid rgba(59,130,246,0.3)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", fontSize: 30 }}>💸</div>
-          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 6 }}><ShimmerText>{metodoPagamento === "pix" ? "Pagamento por Pix" : "Pagamento com cartão"}</ShimmerText></h1>
-          {metodoPagamento === "pix" ? (
-            <p role="timer" aria-live="polite" style={{ color: paymentSecondsLeft <= 60 ? "#fbbf24" : "rgba(255,255,255,0.65)", fontSize: 15, fontWeight: 700, marginBottom: 8 }}>
-              {paymentSecondsLeft > 0 ? `Este Pix expira em ${Math.floor(paymentSecondsLeft / 60)}:${String(paymentSecondsLeft % 60).padStart(2, "0")}` : "Prazo de pagamento expirado"}
-            </p>
-          ) : <p aria-live="polite" style={{ color: "rgba(255,255,255,0.65)", fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Aguardando confirmação do Mercado Pago…</p>}
+          <h1 style={{ fontSize: 28, fontWeight: 800, marginBottom: 6 }}><ShimmerText>Pagamento por Pix</ShimmerText></h1>
+          <p role="timer" aria-live="polite" style={{ color: paymentSecondsLeft <= 60 ? "#fbbf24" : "rgba(255,255,255,0.65)", fontSize: 15, fontWeight: 700, marginBottom: 8 }}>
+            {paymentSecondsLeft > 0 ? `Este Pix expira em ${Math.floor(paymentSecondsLeft / 60)}:${String(paymentSecondsLeft % 60).padStart(2, "0")}` : "Prazo de pagamento expirado"}
+          </p>
           <p style={{ color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>Pedido #{orderNum} · {fmt(total)}</p>
-          {metodoPagamento === "pix" && <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 13, marginBottom: 32 }}>Aponte a câmera do celular para o QR Code</p>}
+          <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 13, marginBottom: 32 }}>Aponte a câmera do celular para o QR Code</p>
           {paymentError && <div role="alert" style={{ margin: "0 0 20px", padding: 14, borderRadius: 12, background: "rgba(239,68,68,0.15)", color: "#fca5a5" }}>{paymentError}<button onClick={() => { setPaymentError(null); setStep("revisao"); }} style={{ display: "block", margin: "12px auto 0", padding: "8px 14px", borderRadius: 8, border: "1px solid #fca5a5", background: "transparent", color: "#fff", cursor: "pointer" }}>Tentar novamente</button></div>}
 
-          {metodoPagamento === "cartao" ? (
-            <div style={{ width: 252, height: 252, background: "rgba(255,255,255,0.05)", borderRadius: 20, margin: "0 auto 28px", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.55)" }}>
-              <CreditCard size={64} strokeWidth={1} />
-            </div>
-          ) : pix?.qrCode ? (
+          {pix?.qrCode ? (
             <ShineBorder style={{ display: "inline-block", marginBottom: 28, borderRadius: 24 }}>
             <div style={{ background: "#fff", borderRadius: 20, padding: 16, display: "inline-block" }}>
               <img src={`data:image/png;base64,${pix.qrCode}`} alt="QR Code Pix" style={{ width: 220, height: 220, display: "block" }} />
@@ -562,24 +440,49 @@ export default function TotemPage() {
 
       {/* STEP 4 — CONFIRMAÇÃO */}
       {step === "confirmacao" && (
-        <div style={{ maxWidth: 500, margin: "0 auto", padding: "60px 24px", textAlign: "center" }}>
-          <div style={{ fontSize: 80, marginBottom: 24 }}>🎉</div>
-          <h1 style={{ fontSize: 36, fontWeight: 900, marginBottom: 8, letterSpacing: "-1px" }}>Pedido confirmado!</h1>
-          <div style={{ fontSize: 80, fontWeight: 900, color: "#3b82f6", margin: "24px 0", letterSpacing: "-2px" }}>#{orderNum}</div>
-          <p style={{ fontSize: 20, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 8 }}>Seu pedido está na fila da cozinha!</p>
-          <p style={{ color: "rgba(255,255,255,0.3)", marginBottom: 48 }}>Aguarde ser chamado pelo número acima.</p>
+        <div style={{ maxWidth: 500, margin: "0 auto", padding: "32px 24px 40px", textAlign: "center" }}>
+          <div style={{ fontSize: 56, marginBottom: 12 }}>🎉</div>
+          <h1 style={{ fontSize: 32, fontWeight: 900, marginBottom: 8, letterSpacing: "-1px" }}>Pedido confirmado!</h1>
+          <div style={{ fontSize: 68, fontWeight: 900, color: "#60a5fa", margin: "12px 0", letterSpacing: "-2px" }}>#{orderNum}</div>
+          <p style={{ fontSize: 18, fontWeight: 600, color: "rgba(255,255,255,0.78)", marginBottom: 6 }}>Seu pedido está na fila da cozinha.</p>
+          <p style={{ color: "rgba(255,255,255,0.72)", marginBottom: 22, fontSize: 16 }}>
+            {nome.trim() ? <>Você será chamado pelo nome <strong style={{ color: "#fff" }}>{nome.trim()}</strong>.</> : <>Você será chamado pela senha <strong style={{ color: "#fff" }}>#{orderNum}</strong>.</>}
+          </p>
 
-          <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 16, padding: 20, marginBottom: 32, border: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 16, padding: 14, marginBottom: 20, border: "1px solid rgba(255,255,255,0.08)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "rgba(255,255,255,0.4)", fontSize: 14 }}>
               <CheckCircle2 size={18} color="#22c55e" />
               Pagamento via Pix confirmado
             </div>
           </div>
 
-          <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 14, marginBottom: 16 }}>Nova tela em <span style={{ color: "#fff", fontWeight: 700 }}>{countdown}s</span></p>
-          <button onClick={reset} style={{ padding: "16px 40px", borderRadius: 14, background: "linear-gradient(135deg,#3b82f6,#6366f1)", border: "none", color: "#fff", fontWeight: 700, fontSize: 16, cursor: "pointer" }}>
+          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 14, marginBottom: 12 }}>Nova tela em <span style={{ color: "#fff", fontWeight: 700 }}>{countdown}s</span></p>
+          <button onClick={reset} disabled={ratingSubmitting} style={{ padding: "14px 36px", borderRadius: 14, background: "linear-gradient(135deg,#3b82f6,#6366f1)", border: "none", color: "#fff", fontWeight: 700, fontSize: 16, cursor: ratingSubmitting ? "wait" : "pointer", opacity: ratingSubmitting ? 0.6 : 1 }}>
             Novo Pedido
           </button>
+
+          <section aria-labelledby="totem-rating-title" style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid rgba(255,255,255,0.14)" }}>
+            <h2 id="totem-rating-title" style={{ fontSize: 18, fontWeight: 700, marginBottom: 5 }}>Como foi usar o totem?</h2>
+            <p style={{ color: "rgba(255,255,255,0.58)", fontSize: 14, marginBottom: 14 }}>Sua nota ajuda a melhorar esta experiência.</p>
+            <div role="group" aria-label="Avalie o totem de 1 a 5 estrelas" style={{ display: "flex", justifyContent: "center", gap: 8 }}>
+              {[1, 2, 3, 4, 5].map((nota) => (
+                <button
+                  key={nota}
+                  type="button"
+                  aria-label={`${nota} ${nota === 1 ? "estrela" : "estrelas"}`}
+                  aria-pressed={rating === nota}
+                  disabled={ratingSubmitting || ratingSubmitted}
+                  onClick={() => void avaliarTotem(nota)}
+                  style={{ width: "clamp(44px, 11vw, 52px)", height: "clamp(44px, 11vw, 52px)", borderRadius: 12, border: rating === nota ? "1px solid #fbbf24" : "1px solid rgba(255,255,255,0.14)", background: rating === nota ? "rgba(251,191,36,0.12)" : "rgba(255,255,255,0.04)", color: rating != null && nota <= rating ? "#fbbf24" : "rgba(255,255,255,0.46)", cursor: ratingSubmitting || ratingSubmitted ? "default" : "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                >
+                  <Star size={27} fill={rating != null && nota <= rating ? "currentColor" : "none"} aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+            <p aria-live="polite" style={{ minHeight: 24, marginTop: 12, fontSize: 14, color: ratingError ? "#fca5a5" : ratingSubmitted ? "#86efac" : "rgba(255,255,255,0.58)" }}>
+              {ratingError || (ratingSubmitting ? "Salvando avaliação..." : ratingSubmitted ? "Obrigado! Sua avaliação foi registrada." : "Toque em uma estrela para avaliar.")}
+            </p>
+          </section>
         </div>
       )}
 
@@ -600,7 +503,7 @@ export default function TotemPage() {
         .totem-shell { position: relative; isolation: isolate; }
         .totem-shell::before { content: ""; position: fixed; z-index: -1; width: 42rem; height: 42rem; right: -15rem; top: -23rem; border-radius: 999px; background: radial-gradient(circle, rgba(37,99,235,.23), transparent 68%); pointer-events: none; }
         .totem-header { position: sticky; top: 0; z-index: 10; }
-        .totem-header > div:first-child > div:first-child { box-shadow: 0 12px 28px rgba(37,99,235,.28); }
+        .totem-header img { box-shadow: 0 8px 20px rgba(0,0,0,.18); }
         .menu-item { min-height: 168px; font-family: inherit; }
         .menu-item:hover { transform: translateY(-3px); box-shadow: 0 16px 30px rgba(0,0,0,.2); }
          .menu-item:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid var(--totem-action-soft); outline-offset: 3px; }
