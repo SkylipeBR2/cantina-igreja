@@ -9,6 +9,10 @@ export async function POST(req: NextRequest) {
   if (originError) return originError;
   const rateLimitError = rejectRateLimitedRequest(req, "pay-card", 5, 10 * 60_000);
   if (rateLimitError) return rateLimitError;
+  if (!process.env.MERCADOPAGO_ACCESS_TOKEN?.trim()) {
+    console.error("MERCADOPAGO_ACCESS_TOKEN ausente no servidor");
+    return NextResponse.json({ erro: "Pagamento indisponível no momento. Avise a equipe." }, { status: 503 });
+  }
 
   try {
     const { token, payment_method_id, issuer_id, installments, payer, id_pedido, trackingToken } = await readJsonBody<Record<string, unknown>>(req);
