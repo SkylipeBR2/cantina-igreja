@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
   const rateLimitError = rejectRateLimitedRequest(request, "cashier-checkout", 30, 60_000);
   if (rateLimitError) return rateLimitError;
   const staff = await requireStaff(request);
-  if (!staff || !["admin", "manager", "cashier"].includes(staff.role)) {
+  if (!staff || !["admin", "manager", "cashier", "cantina"].includes(staff.role)) {
     return NextResponse.json({ erro: "Acesso não autorizado" }, { status: 401 });
   }
 

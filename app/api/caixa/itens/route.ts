@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
   const rateLimitError = rejectRateLimitedRequest(request, "cashier-catalog", 120, 60_000);
   if (rateLimitError) return rateLimitError;
   const staff = await requireStaff(request);
-  if (!staff || !["admin", "manager", "cashier"].includes(staff.role)) {
+  if (!staff || !["admin", "manager", "cashier", "cantina"].includes(staff.role)) {
     return NextResponse.json({ erro: "Acesso não autorizado" }, { status: 401 });
   }
   const { data, error } = await supabaseAdmin.from("items").select("id, name, price, stock_quantity").order("name");

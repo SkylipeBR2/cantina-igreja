@@ -7,6 +7,7 @@ const HOME_BY_ROLE: Record<string, string> = {
   admin: "/admin",
   manager: "/admin",
   cashier: "/caixa",
+  cantina: "/caixa",
   kitchen: "/cozinha",
   totem: "/totem",
 };

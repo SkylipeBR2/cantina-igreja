@@ -3,7 +3,7 @@ import { requireStaff } from "@/lib/server/request-auth";
 import { supabaseAdmin } from "@/lib/server/supabase-admin";
 import { isUuid, readJsonBody, rejectCrossSiteRequest, rejectRateLimitedRequest } from "@/lib/server/request-security";
 
-const DELIVERY_ROLES = new Set(["admin", "manager", "kitchen", "cashier"]);
+const DELIVERY_ROLES = new Set(["admin", "manager", "kitchen", "cashier", "cantina"]);
 
 export async function POST(request: NextRequest) {
   const originError = rejectCrossSiteRequest(request);

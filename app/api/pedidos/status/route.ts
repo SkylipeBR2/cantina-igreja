@@ -8,6 +8,7 @@ const ALLOWED_BY_ROLE: Record<string, Set<string>> = {
   manager: new Set(["preparando", "pronto", "entregue", "cancelado"]),
   kitchen: new Set(["preparando", "pronto"]),
   cashier: new Set(["entregue"]),
+  cantina: new Set(["preparando", "pronto", "entregue"]),
 };
 
 export async function POST(request: NextRequest) {

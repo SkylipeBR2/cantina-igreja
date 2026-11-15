@@ -4,11 +4,18 @@ import Image from "next/image"; // Adicione essa linha aqui
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Store, ChefHat, LayoutDashboard, LogOut } from "lucide-react";
+import { useEffect, useState } from "react";
 
 
 export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [role, setRole] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/auth/me", { signal: controller.signal, cache: "no-store" }).then(response => response.json()).then(data => setRole(data.role ?? "")).catch(() => setRole(""));
+    return () => controller.abort();
+  }, [pathname]);
 
   if (pathname === "/login" || pathname === "/" || pathname === "/totem") return null;
 
@@ -38,32 +45,32 @@ export default function Navbar() {
 
           {/* Links de Navegação */}
           <div className="flex items-center gap-1 sm:gap-2">
-            <Link 
+            {["admin", "manager", "cashier", "cantina"].includes(role) && <Link
               href="/caixa" 
               className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full text-sm font-semibold transition-all ${
                 pathname === '/caixa' ? 'nav-link-active' : 'nav-link'
               }`}
             >
               <Store size={18} /> <span className="hidden md:inline">Caixa</span>
-            </Link>
+            </Link>}
             
-            <Link 
+            {["admin", "manager", "kitchen", "cantina"].includes(role) && <Link
               href="/cozinha" 
               className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full text-sm font-semibold transition-all ${
                 pathname === '/cozinha' ? 'nav-link-active' : 'nav-link'
               }`}
             >
               <ChefHat size={18} /> <span className="hidden md:inline">Cozinha</span>
-            </Link>
+            </Link>}
             
-            <Link 
+            {["admin", "manager"].includes(role) && <Link
               href="/admin" 
               className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full text-sm font-semibold transition-all ${
                 pathname === '/admin' ? 'nav-link-active' : 'nav-link'
               }`}
             >
               <LayoutDashboard size={18} /> <span className="hidden md:inline">Admin</span>
-            </Link>
+            </Link>}
 
             <div className="h-6 w-px bg-border mx-1 sm:mx-2"></div>
 

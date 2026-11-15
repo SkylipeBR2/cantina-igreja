@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
   const rateLimitError = rejectRateLimitedRequest(request, "order-preparation", 120, 60_000);
   if (rateLimitError) return rateLimitError;
   const staff = await requireStaff(request);
-  if (!staff || !["admin", "manager", "kitchen"].includes(staff.role)) return NextResponse.json({ erro: "Acesso não autorizado" }, { status: 401 });
+  if (!staff || !["admin", "manager", "kitchen", "cantina"].includes(staff.role)) return NextResponse.json({ erro: "Acesso não autorizado" }, { status: 401 });
   try {
     const { orderId, orderItemId } = await readJsonBody<{ orderId?: unknown; orderItemId?: unknown }>(request);
     if (!isUuid(orderId) || !isUuid(orderItemId)) return NextResponse.json({ erro: "Dados do pedido inválidos" }, { status: 400 });

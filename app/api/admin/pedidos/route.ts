@@ -13,6 +13,10 @@ export async function GET(request: NextRequest) {
   const dateFrom = searchParams.get("from");
   const dateTo = searchParams.get("to");
   const paymentMethod = searchParams.get("paymentMethod");
+  const validDate = (value: string | null) => value === null || (/^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value);
+  if (!validDate(dateFrom) || !validDate(dateTo) || (dateFrom && dateTo && dateFrom > dateTo) || (paymentMethod !== null && !["dinheiro", "pix", "cartao"].includes(paymentMethod))) {
+    return NextResponse.json({ erro: "Filtros de vendas inválidos" }, { status: 400 });
+  }
   let query = supabaseAdmin
     .from("orders")
     .select("id, order_number, customer_name, created_at, payment_method, status, status_pagamento, total_amount, order_items(quantity, items(name))")

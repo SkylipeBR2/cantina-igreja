@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { Plus, Trash2, Download, Package, Receipt, LayoutDashboard, Search, XCircle } from "lucide-react";
 import { CommerceDashboard } from "@/components/ui/commerce-dashboard";
+import { AdminUsers } from "@/components/admin-users";
+import { csvCell } from "@/lib/csv";
 import { motion, useReducedMotion } from "motion/react";
 
 export default function AdminPage() {
@@ -126,11 +128,11 @@ export default function AdminPage() {
         data.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         order.payment_method.toUpperCase(),
         Number(order.total_amount).toFixed(2).replace(".", ","),
-        `"${itensFormatados}"`
+        itensFormatados
       ];
     });
 
-    const csvContent = "\ufeff" + [headers, ...rows].map(e => e.join(";")).join("\n");
+    const csvContent = "\ufeff" + [headers, ...rows].map(e => e.map(csvCell).join(";")).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -167,6 +169,7 @@ export default function AdminPage() {
         <CommerceDashboard revenue={totalArrecadado} orderCount={orders.length} paidCount={paidCount} lowStockCount={lowStockCount} />
       </div>
 
+      <AdminUsers />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
         {/* Coluna Esquerda: Cadastro e Estoque */}

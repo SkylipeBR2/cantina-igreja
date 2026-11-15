@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
   if (!staff) {
     return NextResponse.json({ erro: "Acesso não autorizado" }, { status: 401 });
   }
-  if (!["admin", "manager", "kitchen"].includes(staff.role)) {
+  if (!["admin", "manager", "kitchen", "cantina"].includes(staff.role)) {
     return NextResponse.json({ erro: "Conta sem permissão para a cozinha" }, { status: 403 });
   }
 

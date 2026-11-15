@@ -61,8 +61,21 @@ export async function readJsonBody<T>(request: NextRequest): Promise<T> {
   const length = Number(request.headers.get("content-length") ?? "0");
   if (Number.isFinite(length) && length > MAX_BODY_BYTES) throw new Error("Corpo da solicitação muito grande");
 
-  const rawBody = await request.text();
-  if (new TextEncoder().encode(rawBody).byteLength > MAX_BODY_BYTES) throw new Error("Corpo da solicitação muito grande");
+  const reader = request.body?.getReader();
+  if (!reader) throw new Error("Corpo da solicitação ausente");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY_BYTES) {
+      await reader.cancel();
+      throw new Error("Corpo da solicitação muito grande");
+    }
+    chunks.push(value);
+  }
+  const rawBody = Buffer.concat(chunks).toString("utf8");
   return JSON.parse(rawBody) as T;
 }
 

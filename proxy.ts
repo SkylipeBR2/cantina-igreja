@@ -5,13 +5,14 @@ const HOME_BY_ROLE: Record<string, string> = {
   admin: "/admin",
   manager: "/admin",
   cashier: "/caixa",
+  cantina: "/caixa",
   kitchen: "/cozinha",
   totem: "/totem",
 };
 const ROUTE_ROLES: Array<{ path: string; roles: string[] }> = [
   { path: "/admin", roles: ["admin", "manager"] },
-  { path: "/caixa", roles: ["admin", "manager", "cashier"] },
-  { path: "/cozinha", roles: ["admin", "manager", "kitchen"] },
+  { path: "/caixa", roles: ["admin", "manager", "cashier", "cantina"] },
+  { path: "/cozinha", roles: ["admin", "manager", "kitchen", "cantina"] },
   { path: "/totem", roles: ["totem"] },
 ];
 
