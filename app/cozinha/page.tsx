@@ -6,6 +6,7 @@ import {
   ChefHat,
   Clock3,
   Loader2,
+  MessageSquare,
   Send,
   UtensilsCrossed,
 } from "lucide-react";
@@ -261,7 +262,15 @@ export default function CozinhaPage() {
                         </span>
                       </div>
 
-                      {order.notes && <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">{order.notes}</p>}
+                      {order.notes?.trim() && (
+                        <section aria-label="Observação do cliente" className="mt-4 rounded-xl border border-amber-400 bg-amber-100 p-4 text-amber-950">
+                          <h3 className="flex items-center gap-2 text-sm font-extrabold">
+                            <MessageSquare className="h-5 w-5 shrink-0" aria-hidden="true" />
+                            Observação do cliente
+                          </h3>
+                          <p className="mt-2 whitespace-pre-wrap break-words text-lg font-bold leading-relaxed [overflow-wrap:anywhere]">{order.notes}</p>
+                        </section>
+                      )}
 
                       <div className="mt-5 flex items-center justify-between">
                         <p className="text-xs font-extrabold uppercase tracking-[0.12em] text-slate-400">Itens</p>

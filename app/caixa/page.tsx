@@ -71,7 +71,7 @@ export default function CaixaPage() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.erro ?? "Não foi possível finalizar");
-      showModal("success", "Pedido finalizado!", `Ticket #${data.order_number} registrado com sucesso.`, "Novo pedido", () => {
+      showModal("success", "Pedido enviado à cozinha!", `Ticket #${data.order_number} registrado com pagamento recebido fora do totem.`, "Novo pedido", () => {
         setCart([]); setCustomerName(""); setNotes(""); fetchItems();
       });
     } catch (error) {
@@ -199,9 +199,12 @@ export default function CaixaPage() {
             </div>
             <p id="customer-name-help" className="sr-only">Nome obrigatório para finalizar o pedido.</p>
 
+            <label htmlFor="received-payment-method" className="block text-sm font-bold text-slate-800">Forma de pagamento já recebido</label>
             <div className="relative group">
               <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={18} />
               <select
+                id="received-payment-method"
+                aria-describedby="received-payment-help"
                 value={paymentMethod}
                 onChange={(e) => setPaymentMethod(e.target.value)}
                 className="w-full bg-white border-2 border-slate-200 pl-11 pr-4 py-3.5 rounded-2xl focus:border-blue-500 focus:ring-0 outline-none transition-all text-slate-900 font-bold appearance-none cursor-pointer"
@@ -211,6 +214,7 @@ export default function CaixaPage() {
                 <option value="cartao">Cartão Débito/Crédito</option>
               </select>
             </div>
+            <p id="received-payment-help" className="text-sm leading-relaxed text-slate-600">O pagamento foi recebido fora do totem. Ao enviar, o pedido segue direto para a cozinha, sem nova cobrança.</p>
 
             <div className="relative group">
               <MessageSquare className="absolute left-4 top-3.5 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={18} />
@@ -229,7 +233,7 @@ export default function CaixaPage() {
             disabled={cart.length === 0 || isLoading}
             className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black text-xl flex justify-center items-center gap-3 hover:bg-blue-700 active:scale-[0.97] transition-all disabled:opacity-50 shadow-xl shadow-blue-200"
           >
-            {isLoading ? "Processando..." : <><Check size={24} strokeWidth={3} /> Finalizar</>}
+            {isLoading ? "Enviando..." : <><Check size={24} strokeWidth={3} /> Enviar à cozinha</>}
           </button>
         </div>
       </aside>

@@ -24,24 +24,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ erro: "Dados do pedido inválidos" }, { status: 400 });
     }
 
-    const ids = items.map((item) => item.id);
-    const { data: catalog, error: catalogError } = await supabaseAdmin.from("items").select("id, price, stock_quantity").in("id", ids);
-    if (catalogError || !catalog || catalog.length !== items.length) throw new Error("Item indisponível");
-    const catalogById = new Map(catalog.map((item) => [item.id, item]));
-    const orderItems = items.map((item) => {
-      const catalogItem = catalogById.get(item.id as string);
-      if (!catalogItem || catalogItem.stock_quantity < Number(item.quantity)) throw new Error("Estoque insuficiente");
-      return { item_id: catalogItem.id, quantity: Number(item.quantity), price: Number(catalogItem.price) };
-    });
-    const total = orderItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const { data, error } = await supabaseAdmin.rpc("process_order", {
-      p_items: orderItems,
+    // The database validates prices/stock and records the external payment and
+    // notes in one transaction, before the order becomes visible to the kitchen.
+    const { data, error } = await supabaseAdmin.rpc("create_cashier_order", {
+      p_items: items.map((item) => ({ item_id: item.id, quantity: item.quantity })),
       p_customer_name: customerName.trim(),
       p_payment_method: paymentMethod,
-      p_total_amount: total,
+      p_notes: typeof notes === "string" ? notes.trim() : null,
     });
     if (error || !data?.order_id) throw error ?? new Error("Pedido não criado");
-    if (typeof notes === "string" && notes.trim()) await supabaseAdmin.from("orders").update({ notes: notes.trim() }).eq("id", data.order_id);
     return NextResponse.json(data);
   } catch (error) {
     return NextResponse.json({ erro: error instanceof Error ? error.message : "Não foi possível finalizar o pedido" }, { status: 400 });
